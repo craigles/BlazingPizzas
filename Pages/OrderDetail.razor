@@ -1,6 +1,9 @@
 @page "/myorders/{orderId:int}"
+@using Microsoft.AspNetCore.Mvc.ModelBinding
 @inject NavigationManager NavigationManager
 @inject HttpClient HttpClient
+
+@implements IDisposable 
 
 <div class="main">
     @if (invalidOrder)
@@ -31,6 +34,12 @@
             </div>
             <div class="track-order-body">
                 <div class="track-order-details">
+                    @if (IsOrderIncomplete)
+                    {
+                        <div class="spinner-grow text-danger float-right" role="status">
+                            <span class="sr-only">Checking your order status!!!! Yipee</span>
+                        </div>
+                    }
                     @foreach (var pizza in orderWithStatus.Order.Pizzas)
                     {
                         <p>
@@ -53,17 +62,38 @@
     OrderWithStatus? orderWithStatus;
     bool invalidOrder = false;
 
-    protected override async Task OnParametersSetAsync()
+    bool IsOrderIncomplete => orderWithStatus is null || orderWithStatus.IsDelivered == false;
+
+    PeriodicTimer timer = new(TimeSpan.FromSeconds(3));
+
+    protected override async Task OnParametersSetAsync() =>
+        await GetLatestOrderStatusUpdatesAsync();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender) =>
+        await (firstRender ? StartPollingTimerAsync() : Task.CompletedTask);
+
+    async Task GetLatestOrderStatusUpdatesAsync()
     {
         try
         {
             orderWithStatus = await HttpClient.GetFromJsonAsync<OrderWithStatus>(
                 $"{NavigationManager.BaseUri}orders/{OrderId}");
         }
-        catch (Exception ex)
+        catch (Exception e)
         {
             invalidOrder = true;
-            Console.Error.WriteLine(ex);
+            Console.Error.WriteLine(e);
         }
     }
+
+    async Task StartPollingTimerAsync()
+    {
+        while (IsOrderIncomplete && await timer.WaitForNextTickAsync())
+        {
+            await GetLatestOrderStatusUpdatesAsync();
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose() => timer.Dispose();
 }
